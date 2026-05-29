@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>東京 硬すぎプリンDB</title>
+
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8398161859137802"
+crossorigin="anonymous"></script>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#17110b;color:#fff;font-family:system-ui,-apple-system,sans-serif}
+header{padding:26px;text-align:center;background:linear-gradient(135deg,#78350f,#b45309,#facc15)}
+header h1{margin:0;font-size:30px}
+header p{margin-top:8px;color:#fff7ed}
+.wrap{max-width:1200px;margin:auto;padding:16px}
+.grid{display:grid;grid-template-columns:380px 1fr;gap:16px}
+.panel{background:#24180f;border-radius:18px;padding:16px;border:1px solid rgba(255,255,255,.14)}
+label{display:block;margin:10px 0 6px;font-weight:700}
+input,select,textarea{width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:#120c08;color:#fff}
+button{border:0;border-radius:12px;padding:11px 14px;background:#d97706;color:#fff;font-weight:700;cursor:pointer}
+button.secondary{background:#57534e}
+button.danger{background:#dc2626}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+#map{height:620px;border-radius:18px;background:#374151}
+.results{display:grid;gap:10px;max-height:560px;overflow:auto;margin-top:12px}
+.shop{background:#120c08;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px}
+.shop h3{margin:0 0 6px;color:#fde68a}
+.tag{display:inline-block;background:#44403c;padding:4px 8px;border-radius:999px;font-size:12px;margin:2px}
+.score{display:inline-block;background:#92400e;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700;margin:2px}
+.small{font-size:13px;color:#e7e5e4;line-height:1.6}
+#dataBox{display:none}
+textarea{min-height:200px;font-family:Consolas,monospace}
+@media(max-width:900px){.grid{grid-template-columns:1fr}#map{height:430px}}
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>東京 硬すぎプリンDB</h1>
+<p>昔ながらの固めプリン・レトロ喫茶プリンを地図で探せるDB</p>
+</header>
+
+<main class="wrap">
+<div class="grid">
+
+<section class="panel">
+
+<label>エリア</label>
+<select id="areaMode"></select>
+
+<label>検索</label>
+<input id="keyword" placeholder="例：銀座 固め 昔ながら 喫茶店">
+
+<div class="btns">
+<button onclick="applySearch()">検索</button>
+<button class="secondary" onclick="showData()">CSV</button>
+<button class="secondary" onclick="showResults()">結果</button>
+<button class="danger" onclick="resetStores()">初期化</button>
+</div>
+
+<p id="status" class="small"></p>
+<div id="resultsBox" class="results"></div>
+
+<div id="dataBox">
+<p class="small">
+CSV形式：<br>
+id,name,area,address,lat,lng,firmness,type,tags
+</p>
+
+<textarea id="csvInput"></textarea>
+
+<div class="btns">
+<button onclick="applyCsv()">CSV反映</button>
+<button class="secondary" onclick="exportCsv()">CSV出力</button>
+</div>
+
+<textarea id="jsonBox"></textarea>
+</div>
+
+</section>
+
+<section class="panel">
+<div id="map"></div>
+</section>
+
+</div>
+</main>
+
+<script>
+const STORAGE_KEY = "tokyo_hard_pudding_db_v1";
+
+/* GoogleスプレッドシートのCSV公開URLをここに入れる */
+const CSV_URL = "";
+
+const MAX_INITIAL_DISPLAY = 150;
+
+const DEFAULT_STORES = [
+{
+id:"pudding_001",
+name:"喫茶トリコロール 本店",
+area:"銀座",
+address:"東京都中央区銀座5-9-17",
+lat:35.6705,
+lng:139.7654,
+firmness:"硬め",
+type:"レトロ喫茶プリン",
+tags:["銀座","喫茶店","昔ながら","固めプリン"]
+},
+{
+id:"pudding_002",
+name:"ヘッケルン",
+area:"虎ノ門",
+address:"東京都港区西新橋1-20-11",
+lat:35.6690,
+lng:139.7523,
+firmness:"かなり硬め",
+type:"ジャンボプリン",
+tags:["虎ノ門","名物プリン","純喫茶","固め"]
+}
+];
+
+let stores = [];
+let filteredStores = [];
+let map;
+let markers = [];
+
+async function init(){
+  stores = await loadStores();
+
+  map = L.map("map").setView([35.681236,139.767125],11);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
+    maxZoom:19,
+    attribution:"&copy; OpenStreetMap contributors"
+  }).addTo(map);
+
+  document.getElementById("areaMode").addEventListener("change",applySearch);
+  document.getElementById("keyword").addEventListener("input",applySearch);
+
+  buildAreas();
+  applySearch();
+}
+
+async function loadStores(){
+  try{
+    if(CSV_URL){
+      const res = await fetch(CSV_URL);
+      const text = await res.text();
+      const csvData = parseCsv(text);
+      if(csvData.length) return csvData;
+    }
+  }catch(e){
+    console.error(e);
+  }
+  return DEFAULT_STORES;
+}
+
+function parseCsv(text){
+  const lines = text.trim().split(/\r?\n/);
+  if(lines.length < 2) return [];
+
+  const data = [];
+
+  for(let i=1;i<lines.length;i++){
+    const row = lines[i].split(",");
+    if(row.length < 8) continue;
+
+    data.push({
+      id:row[0],
+      name:row[1],
+      area:row[2],
+      address:row[3],
+      lat:Number(row[4]),
+      lng:Number(row[5]),
+      firmness:row[6] || "",
+      type:row[7] || "",
+      tags:(row[8] || "").split("|").filter(Boolean)
+    });
+  }
+  return data;
+}
+
+function buildAreas(){
+  const select = document.getElementById("areaMode");
+  const areas = [...new Set(stores.map(x=>x.area))];
+
+  select.innerHTML = '<option value="all">東京全体</option>';
+
+  areas.forEach(a=>{
+    const opt = document.createElement("option");
+    opt.value = a;
+    opt.textContent = a;
+    select.appendChild(opt);
+  });
+}
+
+function applySearch(){
+  const area = document.getElementById("areaMode").value;
+  const kw = document.getElementById("keyword").value.toLowerCase();
+
+  let results = stores.filter(s=>{
+    const text = [
+      s.name,
+      s.area,
+      s.address,
+      s.firmness,
+      s.type,
+      (s.tags || []).join(" ")
+    ].join(" ").toLowerCase();
+
+    return (area === "all" || s.area === area) &&
+    (!kw || text.includes(kw));
+  });
+
+  filteredStores = results.slice(0,MAX_INITIAL_DISPLAY);
+
+  renderResults();
+  renderMarkers();
+
+  document.getElementById("status").textContent =
+    filteredStores.length + "件表示 / 該当" + results.length + "件";
+}
+
+function renderResults(){
+  const box = document.getElementById("resultsBox");
+
+  if(!filteredStores.length){
+    box.innerHTML = "該当なし";
+    return;
+  }
+
+  box.innerHTML = filteredStores.map((s,i)=>`
+    <div class="shop">
+      <h3>${i+1}. ${s.name}</h3>
+      <p>${s.address}</p>
+      <p>
+        <span class="score">硬さ：${s.firmness || "不明"}</span>
+        <span class="tag">${s.area}</span>
+        <span class="tag">${s.type || "プリン"}</span>
+        ${(s.tags||[]).map(t=>`<span class="tag">${t}</span>`).join("")}
+      </p>
+      <div class="btns">
+        <button class="secondary" onclick="focusStore('${s.id}')">地図</button>
+        <button onclick="openGoogle('${s.id}')">GoogleMap</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderMarkers(){
+  markers.forEach(m=>m.remove());
+  markers = [];
+
+  filteredStores.forEach(s=>{
+    if(!s.lat || !s.lng) return;
+
+    const marker = L.marker([s.lat,s.lng]).addTo(map);
+    marker.storeId = s.id;
+    marker.bindPopup("<b>"+s.name+"</b><br>"+(s.firmness || ""));
+    markers.push(marker);
+  });
+}
+
+function focusStore(id){
+  const s = stores.find(x=>x.id===id);
+  if(!s) return;
+
+  map.setView([s.lat,s.lng],16);
+
+  const m = markers.find(x=>x.storeId===id);
+  if(m) m.openPopup();
+}
+
+function openGoogle(id){
+  const s = stores.find(x=>x.id===id);
+  if(!s) return;
+
+  window.open(
+    "https://www.google.com/maps/search/?api=1&query=" +
+    encodeURIComponent(s.name + " " + s.address),
+    "_blank"
+  );
+}
+
+function applyCsv(){
+  const raw = document.getElementById("csvInput").value;
+  stores = parseCsv(raw);
+  buildAreas();
+  applySearch();
+}
+
+function exportCsv(){
+  const csv = stores.map(s=>
+    [
+      s.id,
+      s.name,
+      s.area,
+      s.address,
+      s.lat,
+      s.lng,
+      s.firmness,
+      s.type,
+      (s.tags||[]).join("|")
+    ].join(",")
+  ).join("\n");
+
+  document.getElementById("csvInput").value =
+    "id,name,area,address,lat,lng,firmness,type,tags\n" + csv;
+
+  document.getElementById("jsonBox").value =
+    JSON.stringify(stores,null,2);
+}
+
+function resetStores(){
+  localStorage.removeItem(STORAGE_KEY);
+  stores = DEFAULT_STORES;
+  buildAreas();
+  applySearch();
+}
+
+function showData(){
+  document.getElementById("dataBox").style.display = "block";
+  document.getElementById("resultsBox").style.display = "none";
+}
+
+function showResults(){
+  document.getElementById("dataBox").style.display = "none";
+  document.getElementById("resultsBox").style.display = "grid";
+}
+
+window.addEventListener("load",init);
+</script>
+
+<div style="max-width:1200px;margin:30px auto;padding:0 16px;">
+<ins class="adsbygoogle"
+style="display:block"
+data-ad-client="ca-pub-8398161859137802"
+data-ad-slot="5599163841"
+data-ad-format="auto"
+data-full-width-responsive="true"></ins>
+
+<script>
+(adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+</div>
+
+<script defer src="/_vercel/speed-insights/script.js"></script>
+<script defer src="/_vercel/insights/script.js"></script>
+
+</body>
+</html>
